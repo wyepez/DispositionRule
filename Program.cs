@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
@@ -63,6 +64,7 @@ namespace DispositionRule
                     ArticleMaterialId = 1,
                 },
             };
+            var globals = new GlobalParameters { StockBelow = stockBelow, StockBelowSupport = stockBelowSupport };
 
             var scoreRules = new[] {
                 "if (StockBelow.Article.SubGroupId == 1 && StockBelowSupport.Article.SubGroupId == 1) return 5; else if (StockBelow.Article.SubGroupId == 2 || StockBelowSupport.Article.SubGroupId == 2) return 3; else return 0;"
@@ -72,16 +74,14 @@ namespace DispositionRule
                 "StockBelow is not null && StockBelowSupport is not null",
             };
 
-            // Create an empty state
-            var state = await CSharpScript.RunAsync("", globals: new GlobalParameters { StockBelow = stockBelow, StockBelowSupport = stockBelowSupport });
-
-            // Evaluate each score rule
+            var compiledScoreRules = new List<(string script, ScriptRunner<double> execute)>();
             foreach (var rule in scoreRules)
             {
                 try
                 {
-                    state = await state.ContinueWithAsync(rule);
-                    Console.WriteLine(String.Format("Rule '{0}' was evaluated as {1}", rule, (int)state.ReturnValue));
+                    var script = CSharpScript.Create<double>(rule, globalsType: typeof(GlobalParameters));
+                    var runner = script.CreateDelegate();
+                    compiledScoreRules.Add((rule, runner));
                 }
                 catch (CompilationErrorException exception)
                 {
@@ -89,18 +89,31 @@ namespace DispositionRule
                 }
             }
 
-            // Evaluate each filter rule
+            var compiledFilterRules = new List<(string script, ScriptRunner<bool> execute)>();
             foreach (var rule in filterRules)
             {
                 try
                 {
-                    state = await state.ContinueWithAsync(rule);
-                    Console.WriteLine(String.Format("Rule '{0}' was evaluated as {1}", rule, (bool)state.ReturnValue));
+                    var script = CSharpScript.Create<bool>(rule, globalsType: typeof(GlobalParameters));
+                    var runner = script.CreateDelegate();
+                    compiledFilterRules.Add((rule, runner));
                 }
                 catch (CompilationErrorException exception)
                 {
                     Console.WriteLine(string.Join(Environment.NewLine, exception.Diagnostics));
                 }
+            }
+
+            // Evaluate each score rule
+            foreach (var rule in compiledScoreRules)
+            {
+                Console.WriteLine(String.Format("Rule '{0}' was evaluated as {1}", rule.script, await rule.execute(globals)));
+            }
+
+            // Evaluate each filter rule
+            foreach (var rule in compiledFilterRules)
+            {
+                Console.WriteLine(String.Format("Rule '{0}' was evaluated as {1}", rule.script, await rule.execute(globals)));
             }
         }
     }
